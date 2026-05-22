@@ -24,6 +24,12 @@ for search_path in [app_dir, parent_dir]:
     if os.path.isdir(os.path.join(search_path, 'brainlife_utils')):
         sys.path.insert(0, search_path)
         break
+# Headless 3D rendering — must be set BEFORE vtk/pyvista/mne.viz is imported.
+# QT_QPA_PLATFORM=offscreen lets Qt init without X11 (bypasses MNE's _display_is_valid check).
+# VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1 tells VTK to render offscreen (uses OSMesa if available).
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+os.environ.setdefault('VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN', '1')
+os.environ.setdefault('MPLBACKEND', 'Agg')
 
 from brainlife_utils import (
     setup_matplotlib_backend,
