@@ -3,7 +3,8 @@ app-label-timecourse-v2: Extract label time courses from a SourceEstimate.
 
 Inputs : source_estimate datatype (*-lh.stc + *-rh.stc),
          freesurfer datatype (for atlas labels).
-Outputs: label_time_courses.csv (time × labels),
+Outputs: timeseries datatype  (timeseries.tsv.gz + timeseries.json),
+         surface/data datatype (left.gii + right.gii, one value per vertex per timepoint),
          time course plots per hemisphere,
          HTML report.
 """
@@ -11,7 +12,11 @@ Outputs: label_time_courses.csv (time × labels),
 import os
 import sys
 import glob
+import gzip
+import json as _json
 import numpy as np
+import nibabel as nib
+import nibabel.freesurfer as _fs
 
 app_dir    = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(app_dir)
@@ -34,17 +39,22 @@ import matplotlib.pyplot as plt
 import mne
 
 # == SETUP ==
-ensure_output_dirs('out_dir', 'out_figs', 'out_report')
+ensure_output_dirs('out_dir', 'out_surface', 'out_figs', 'out_report')
 report_items = []
 
 # == LOAD CONFIG ==
 config = load_config()
 
 # == FIND STC FILES ==
-stc_input = config.get('stc') or ''
-stc_base  = None
+# Brainlife may provide separate stc-lh / stc-rh keys or a directory via stc
+stc_lh_file = config.get('stc-lh') or ''
+stc_input   = config.get('stc') or ''
+stc_base    = None
 
-if stc_input:
+if stc_lh_file and os.path.isfile(stc_lh_file):
+    # Direct file paths from Brainlife (stc-lh / stc-rh keys)
+    stc_base = stc_lh_file[:-7] if stc_lh_file.endswith('-lh.stc') else stc_lh_file
+elif stc_input:
     if os.path.isdir(stc_input):
         lh_files = sorted(glob.glob(os.path.join(stc_input, '*-lh.stc')))
         if lh_files:
@@ -54,7 +64,8 @@ if stc_input:
 
 if stc_base is None:
     add_info_to_product(report_items,
-                        f"FATAL: No *-lh.stc files found at '{stc_input}'.", "error")
+                        f"FATAL: No *-lh.stc files found. "
+                        f"Checked stc-lh='{stc_lh_file}', stc='{stc_input}'.", "error")
     create_product_json(report_items)
     sys.exit(1)
 
@@ -98,7 +109,7 @@ if subjects_dir is None:
 add_info_to_product(report_items, f"Subject: {subject}, subjects_dir: {subjects_dir}", "info")
 
 # == ATLAS & LABELS ==
-atlas      = config.get('atlas') or 'aparc'
+atlas      = (config.get('atlas') or 'aparc').strip()
 hemi_cfg   = config.get('hemi') or 'both'
 labels_cfg = config.get('labels') or ''
 
@@ -131,14 +142,18 @@ if labels_cfg.strip():
     add_info_to_product(report_items, f"Filtered to {len(all_labels)} labels.", "info")
 
 # == EXTRACT TIME COURSES ==
-label_names = []
-label_tcs   = []
+label_names  = []
+label_tcs    = []
+label_verts  = {}   # label_name → (hemi, vertex_indices_in_full_surface)
 
 for label in all_labels:
     try:
-        tc = stc.in_label(label).data.mean(axis=0)
+        sub_stc = stc.in_label(label)
+        tc      = sub_stc.data.mean(axis=0)
+        verts   = sub_stc.vertices[0] if label.hemi == 'lh' else sub_stc.vertices[1]
         label_names.append(label.name)
         label_tcs.append(tc)
+        label_verts[label.name] = (label.hemi, verts)
     except Exception as e:
         add_info_to_product(report_items, f"Skipped '{label.name}': {e}", "warning")
 
@@ -151,12 +166,64 @@ label_tcs = np.array(label_tcs)   # (n_labels, n_times)
 add_info_to_product(report_items,
                     f"Extracted {len(label_names)} label time courses.", "info")
 
-# == SAVE CSV ==
-csv_path = os.path.join('out_dir', 'label_time_courses.csv')
-header   = 'time,' + ','.join(label_names)
-np.savetxt(csv_path, np.column_stack([stc.times, label_tcs.T]),
-           delimiter=',', header=header, comments='')
-add_info_to_product(report_items, f"Saved: {csv_path}", "info")
+# == SAVE TIMESERIES DATATYPE ==
+tsv_path  = os.path.join('out_dir', 'timeseries.tsv.gz')
+json_path = os.path.join('out_dir', 'timeseries.json')
+
+with gzip.open(tsv_path, 'wt') as f:
+    f.write('\t'.join(label_names) + '\n')
+    for row in label_tcs.T:   # rows = timepoints, cols = labels
+        f.write('\t'.join(f'{v:.6g}' for v in row) + '\n')
+
+sfreq = float(1.0 / (stc.times[1] - stc.times[0])) if len(stc.times) > 1 else 1.0
+with open(json_path, 'w') as f:
+    _json.dump({
+        'SamplingFrequency': round(sfreq, 4),
+        'StartTime':         round(float(stc.times[0]), 6),
+        'Columns':           label_names,
+        'atlas':             atlas,
+        'n_labels':          len(label_names),
+    }, f, indent=2)
+add_info_to_product(report_items,
+                    f"Saved timeseries: {len(label_names)} labels × {len(stc.times)} timepoints",
+                    "info")
+
+# == SAVE SURFACE/DATA GIFTI ==
+for _hemi, _side in [('lh', 'left'), ('rh', 'right')]:
+    if _hemi not in hemis:
+        continue
+    surf_path = os.path.join(subjects_dir, subject, 'surf', f'{_hemi}.inflated')
+    if not os.path.isfile(surf_path):
+        add_info_to_product(report_items,
+                            f"Skipping GIfTI {_side}: surface not found at {surf_path}", "warning")
+        continue
+    try:
+        coords, _ = _fs.read_geometry(surf_path)
+        n_verts   = len(coords)
+        vertex_tc = np.zeros((n_verts, len(stc.times)), dtype=np.float32)
+
+        for name, (h, verts) in label_verts.items():
+            if h != _hemi:
+                continue
+            tc_idx = label_names.index(name)
+            vertex_tc[verts, :] = label_tcs[tc_idx]
+
+        gii = nib.gifti.GiftiImage()
+        for t_idx in range(len(stc.times)):
+            da = nib.gifti.GiftiDataArray(
+                data=vertex_tc[:, t_idx],
+                intent=nib.nifti1.intent_codes['NIFTI_INTENT_TIME_SERIES'],
+                datatype='NIFTI_TYPE_FLOAT32',
+            )
+            gii.add_gifti_data_array(da)
+
+        gii_path = os.path.join('out_surface', f'{_side}.gii')
+        nib.save(gii, gii_path)
+        add_info_to_product(report_items,
+                            f"Saved GIfTI surface ({_side}): {n_verts} vertices × {len(stc.times)} timepoints",
+                            "info")
+    except Exception as e:
+        add_info_to_product(report_items, f"Could not write GIfTI ({_side}): {e}", "warning")
 
 # == PLOTS & REPORT ==
 report = mne.Report(title='Label Time Courses')
