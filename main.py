@@ -51,9 +51,16 @@ stc_lh_file = config.get('stc-lh') or ''
 stc_input   = config.get('stc') or ''
 stc_base    = None
 
-if stc_lh_file and os.path.isfile(stc_lh_file):
-    # Direct file paths from Brainlife (stc-lh / stc-rh keys)
-    stc_base = stc_lh_file[:-7] if stc_lh_file.endswith('-lh.stc') else stc_lh_file
+if stc_lh_file:
+    if os.path.isfile(stc_lh_file):
+        stc_base = stc_lh_file[:-7] if stc_lh_file.endswith('-lh.stc') else stc_lh_file
+    else:
+        # Exact path doesn't resolve (e.g. Brainlife sends a stale/different filename).
+        # Glob the same directory for any *-lh.stc file.
+        _dir = os.path.dirname(stc_lh_file) or '.'
+        _candidates = sorted(glob.glob(os.path.join(_dir, '*-lh.stc')))
+        if _candidates:
+            stc_base = _candidates[0][:-7]
 elif stc_input:
     if os.path.isdir(stc_input):
         lh_files = sorted(glob.glob(os.path.join(stc_input, '*-lh.stc')))
