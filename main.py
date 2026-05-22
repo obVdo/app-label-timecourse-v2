@@ -188,6 +188,81 @@ for hemi in hemis:
     add_image_to_product(report_items, f'Label time courses {hemi.upper()}', filepath=fig_path)
     report.add_image(fig_path, title=f'Label time courses {hemi.upper()} ({atlas})')
 
+# == BRAIN ANNOTATION PLOT ==
+try:
+    from qtpy.QtWidgets import QApplication
+    _qapp = QApplication.instance() or QApplication(sys.argv)
+
+    import pyvista as pv
+    pv.OFF_SCREEN = True
+    mne.viz.set_3d_backend('pyvistaqt')
+
+    from mne.viz.backends._pyvista import (
+        PyVistaFigure, Plotter as PVPlotter, _PyVistaRenderer, _ALL_PLOTTERS,
+    )
+    import mne.viz.backends.renderer as renderer_mod
+
+    def _patched_build(self):
+        if self._plotter is None:
+            store_filtered = {k: v for k, v in self.store.items()
+                              if k in ('window_size', 'shape', 'border', 'multi_samples')}
+            plotter = PVPlotter(off_screen=True, **store_filtered)
+            plotter.background_color = self.background_color
+            self._plotter = plotter
+            try:
+                _ALL_PLOTTERS[plotter._id_name] = plotter
+            except AttributeError:
+                pass
+        if self.plotter.iren is not None:
+            self.plotter.iren.initialize()
+            def safe_update(stime=1, force_redraw=True):
+                self.plotter.render()
+            self.plotter.update = safe_update
+        return self.plotter
+
+    PyVistaFigure._build = _patched_build
+
+    class _OffscreenRenderer(_PyVistaRenderer):
+        _kind = 'pyvistaqt'
+        def show(self):
+            self.figure.plotter.show(auto_close=False)
+        def __getattr__(self, name):
+            if name.startswith(('_window_', '_dock_', '_enable_', '_disable_')):
+                return lambda *a, **kw: None
+            raise AttributeError(name)
+
+    renderer_mod.backend._Renderer = _OffscreenRenderer
+
+    Brain = mne.viz.get_brain_class()
+    specific_labels = labels_cfg.strip()
+
+    for _hemi in hemis:
+        brain = Brain(subject, hemi=_hemi, surf='inflated',
+                      subjects_dir=subjects_dir, size=800, background='white')
+        brain.add_annotation(atlas, borders=False, alpha=0.7)
+
+        # Highlight selected labels in red if a subset was requested
+        if specific_labels:
+            for label in all_labels:
+                if label.hemi == _hemi:
+                    brain.add_label(label, color='red', alpha=0.9, borders=False)
+
+        brain_path = os.path.join('out_figs', f'brain_annotation_{_hemi}.png')
+        brain.save_image(brain_path)
+        try:
+            brain.close()
+        except Exception:
+            pass
+
+        add_image_to_product(report_items,
+                             f'Brain annotation {_hemi.upper()} ({atlas})',
+                             filepath=brain_path)
+        report.add_image(brain_path,
+                         title=f'Brain annotation {_hemi.upper()} ({atlas})')
+
+except Exception as e:
+    add_info_to_product(report_items, f"Could not render brain annotation: {e}", "warning")
+
 report.save(os.path.join('out_report', 'report.html'), overwrite=True)
 
 add_info_to_product(report_items,
