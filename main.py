@@ -268,7 +268,7 @@ for hemi in hemis:
     add_image_to_product(report_items, f'Label time courses {hemi.upper()}', filepath=fig_path)
     report.add_image(fig_path, title=f'Label time courses {hemi.upper()} ({atlas})')
 
-# == BRAIN ANNOTATION PLOT ==
+# == BRAIN LABEL / ANNOTATION PLOTS ==
 try:
     from qtpy.QtWidgets import QApplication
     _qapp = QApplication.instance() or QApplication(sys.argv)
@@ -314,34 +314,40 @@ try:
     renderer_mod.backend._Renderer = _OffscreenRenderer
 
     Brain = mne.viz.get_brain_class()
-    specific_labels = labels_cfg.strip()
 
     for _hemi in hemis:
+        # -- product.json: only the extracted labels, each in its own colour --
         brain = Brain(subject, hemi=_hemi, surf='inflated',
                       subjects_dir=subjects_dir, size=800, background='white')
-        brain.add_annotation(atlas, borders=False, alpha=0.7)
-
-        # Highlight selected labels in red if a subset was requested
-        if specific_labels:
-            for label in all_labels:
-                if label.hemi == _hemi:
-                    brain.add_label(label, color='red', alpha=0.9, borders=False)
-
-        brain_path = os.path.join('out_figs', f'brain_annotation_{_hemi}.png')
-        brain.save_image(brain_path)
+        for _i, label in enumerate([l for l in all_labels if l.hemi == _hemi]):
+            brain.add_label(label, color=_colors[_i % len(_colors)],
+                            alpha=0.8, borders=False)
+        labels_path = os.path.join('out_figs', f'brain_labels_{_hemi}.png')
+        brain.save_image(labels_path)
         try:
             brain.close()
         except Exception:
             pass
-
         add_image_to_product(report_items,
-                             f'Brain annotation {_hemi.upper()} ({atlas})',
-                             filepath=brain_path)
-        report.add_image(brain_path,
-                         title=f'Brain annotation {_hemi.upper()} ({atlas})')
+                             f'Labels {_hemi.upper()}',
+                             filepath=labels_path)
+        report.add_image(labels_path, title=f'Selected labels {_hemi.upper()}')
+
+        # -- HTML report only: full atlas annotation --
+        brain2 = Brain(subject, hemi=_hemi, surf='inflated',
+                       subjects_dir=subjects_dir, size=800, background='white')
+        brain2.add_annotation(atlas, borders=False, alpha=0.7)
+        annot_path = os.path.join('out_figs', f'brain_annotation_{_hemi}.png')
+        brain2.save_image(annot_path)
+        try:
+            brain2.close()
+        except Exception:
+            pass
+        report.add_image(annot_path,
+                         title=f'Full atlas annotation {_hemi.upper()} ({atlas})')
 
 except Exception as e:
-    add_info_to_product(report_items, f"Could not render brain annotation: {e}", "warning")
+    add_info_to_product(report_items, f"Could not render brain plots: {e}", "warning")
 
 report.save(os.path.join('out_report', 'report.html'), overwrite=True)
 
