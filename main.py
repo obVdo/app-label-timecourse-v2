@@ -323,20 +323,16 @@ try:
             brain.add_label(label, color=_colors[_i % len(_colors)],
                             alpha=0.8, borders=False)
 
-        _lat_path  = os.path.join('out_figs', f'brain_labels_{_hemi}_lat.png')
-        _vent_path = os.path.join('out_figs', f'brain_labels_{_hemi}_vent.png')
         brain.show_view('lateral')
-        brain.save_image(_lat_path)
+        _img_lat  = brain.screenshot()
         brain.show_view('ventral')
-        brain.save_image(_vent_path)
+        _img_vent = brain.screenshot()
         try:
             brain.close()
         except Exception:
             pass
 
         # stitch lateral + ventral side by side
-        _img_lat  = plt.imread(_lat_path)
-        _img_vent = plt.imread(_vent_path)
         _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
         for _ax, _img, _title in zip(_axes,
                                      [_img_lat, _img_vent],
@@ -359,12 +355,13 @@ try:
         brain2 = Brain(subject, hemi=_hemi, surf='inflated',
                        subjects_dir=subjects_dir, size=800, background='white')
         brain2.add_annotation(atlas, borders=False, alpha=0.7)
-        annot_path = os.path.join('out_figs', f'brain_annotation_{_hemi}.png')
-        brain2.save_image(annot_path)
+        _img_annot = brain2.screenshot()
         try:
             brain2.close()
         except Exception:
             pass
+        annot_path = os.path.join('out_figs', f'brain_annotation_{_hemi}.png')
+        plt.imsave(annot_path, _img_annot)
         report.add_image(annot_path,
                          title=f'Full atlas annotation {_hemi.upper()} ({atlas})')
 
