@@ -316,18 +316,40 @@ try:
     Brain = mne.viz.get_brain_class()
 
     for _hemi in hemis:
-        # -- product.json: only the extracted labels, each in its own colour --
+        # -- product.json: only the extracted labels, lateral + ventral views --
         brain = Brain(subject, hemi=_hemi, surf='inflated',
                       subjects_dir=subjects_dir, size=800, background='white')
         for _i, label in enumerate([l for l in all_labels if l.hemi == _hemi]):
             brain.add_label(label, color=_colors[_i % len(_colors)],
                             alpha=0.8, borders=False)
-        labels_path = os.path.join('out_figs', f'brain_labels_{_hemi}.png')
-        brain.save_image(labels_path)
+
+        _lat_path  = os.path.join('out_figs', f'brain_labels_{_hemi}_lat.png')
+        _vent_path = os.path.join('out_figs', f'brain_labels_{_hemi}_vent.png')
+        brain.show_view('lateral')
+        brain.save_image(_lat_path)
+        brain.show_view('ventral')
+        brain.save_image(_vent_path)
         try:
             brain.close()
         except Exception:
             pass
+
+        # stitch lateral + ventral side by side
+        _img_lat  = plt.imread(_lat_path)
+        _img_vent = plt.imread(_vent_path)
+        _fig, _axes = plt.subplots(1, 2, figsize=(14, 5))
+        for _ax, _img, _title in zip(_axes,
+                                     [_img_lat, _img_vent],
+                                     ['Lateral', 'Ventral']):
+            _ax.imshow(_img)
+            _ax.set_title(_title, fontsize=10)
+            _ax.axis('off')
+        _fig.suptitle(f'Selected labels — {_hemi.upper()}', fontsize=11)
+        plt.tight_layout()
+        labels_path = os.path.join('out_figs', f'brain_labels_{_hemi}.png')
+        _fig.savefig(labels_path, dpi=100, bbox_inches='tight')
+        plt.close(_fig)
+
         add_image_to_product(report_items,
                              f'Labels {_hemi.upper()}',
                              filepath=labels_path)
