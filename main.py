@@ -114,7 +114,8 @@ if fs_path and os.path.isdir(fs_path):
             subject      = subject or _subdirs[0]
 
 if subjects_dir is None:
-    subjects_dir = str(mne.datasets.fetch_fsaverage(verbose=False))
+    _fsa = mne.datasets.fetch_fsaverage(verbose=False)
+    subjects_dir = os.path.dirname(str(_fsa))   # strip /fsaverage suffix → parent dir
     subject      = 'fsaverage'
     add_info_to_product(report_items,
                         "No FreeSurfer dir provided — using built-in fsaverage atlas.", "info")
